@@ -47,7 +47,11 @@ header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;padding:10px 1
 .sp{flex:1}
 .wrap{max-width:960px;margin:0 auto}
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:14px 8px;padding:16px}
-.tile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px;border-radius:14px}
+.tile{display:flex;flex-direction:column;align-items:center;gap:2px;position:relative}
+.tileBtn{display:flex;flex-direction:column;align-items:center;gap:6px;padding:4px;border-radius:14px;width:100%}
+.mv{display:flex;gap:2px;opacity:.55}
+.mv button{background:var(--card);width:22px;height:20px;padding:0;font-size:10px;border-radius:6px}
+.mv button:disabled{opacity:.25}
 .tile .ico{width:84px;height:84px;display:flex;align-items:center;justify-content:center;font-size:56px;transition:transform .12s}
 .tile:active .ico{transform:scale(.92)}
 .tile img{max-width:100%;max-height:100%;object-fit:contain;filter:drop-shadow(0 3px 5px rgba(0,0,0,.35))}
@@ -186,14 +190,15 @@ button:active,label.btn:active{transform:scale(.96)}
 <script>
 let db=null,assets=null,folders=[],posts=[],files=[],ready=0,bFiles=[];
 let seenP=new Set(),seenF=new Set(),curSeen='',animNext=true,expAnim='',lastBg='';
-let ord='new';try{ord=localStorage.getItem('ord')==='old'?'old':'new'}catch(e){}
+let ord='old';try{const v=localStorage.getItem('ord');ord=v?(v==='old'?'old':'new'):'old'}catch(e){}
 const getCmp=()=>{try{return localStorage.getItem('cmp')!=='0'}catch(e){return true}};
 let cur=(location.hash||'').slice(1),open=new Set(),draft=null,orig=null,newly=[];
 const $=id=>document.getElementById(id);
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e};
 const fmt=t=>new Date(t).toLocaleString('ko-KR',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-const cmp=(a,b)=>a.name.localeCompare(b.name,'ko');
+const ordOf=f=>typeof f.order==='number'?f.order:1e15;
+const cmp=(a,b)=>ordOf(a)-ordOf(b)||a.name.localeCompare(b.name,'ko');
 const byId=id=>folders.find(f=>f.id===id);
 const kids=id=>folders.filter(f=>(f.parentId||'')===id).sort(cmp);
 const chainOf=id=>{const a=[];let c=id;while(c){const f=byId(c);if(!f)break;a.unshift(f);c=f.parentId||''}return a};
@@ -273,7 +278,14 @@ function renderMain(){
   if(doAnim||curSeen!==cur){seenF=new Set(subs.map(x=>x.id));seenP=new Set(mine0.map(x=>x.id));curSeen=cur}
   else{subs.forEach(x=>{if(!seenF.has(x.id)){freshF.add(x.id);seenF.add(x.id)}});mine0.forEach(x=>{if(!seenP.has(x.id)){freshP.add(x.id);seenP.add(x.id)}})}
   T.style.display=subs.length?'':'none';
-  subs.forEach((f,i)=>{const an=doAnim||freshF.has(f.id),b=el('button','tile'+(an?' enter':''));if(doAnim)b.style.setProperty('--i',Math.min(i,12));const w=el('div','ico');if(f.icon){const i=document.createElement('img');i.src=url(f.icon);w.appendChild(i)}else w.textContent='📁';b.append(w,el('span','nm',f.name));b.onclick=()=>go(f.id);T.appendChild(b)});
+  subs.forEach((f,i)=>{const an=doAnim||freshF.has(f.id),wrap=el('div','tile'+(an?' enter':''));if(doAnim)wrap.style.setProperty('--i',Math.min(i,12));
+    const mv=el('div','mv');
+    const lft=el('button','','◀'),rgt=el('button','','▶');
+    lft.disabled=i===0;rgt.disabled=i===subs.length-1;
+    lft.onclick=async ev=>{ev.stopPropagation();await swapOrder(subs,i,i-1)};
+    rgt.onclick=async ev=>{ev.stopPropagation();await swapOrder(subs,i,i+1)};
+    mv.append(lft,rgt);
+    const b=el('button','tileBtn');const w=el('div','ico');if(f.icon){const i=document.createElement('img');i.src=url(f.icon);w.appendChild(i)}else w.textContent='📁';b.append(w,el('span','nm',f.name));b.onclick=()=>go(f.id);wrap.append(mv,b);T.appendChild(wrap)});
   // posts
   const list=$('list');list.textContent='';
   let mine=posts.filter(p=>(p.folderId||'')===cur);
@@ -305,9 +317,17 @@ $('q').oninput=renderTree;
 $('scrim').onclick=()=>document.body.classList.remove('nav');
 
 // single folder
+function nextOrder(parentId){const ks=kids(parentId);return ks.length?Math.max(...ks.map(ordOf).filter(v=>v<1e15),0)+1:0}
+async function swapOrder(list,i,j){
+  const a=list[i],b=list[j];
+  const ao=ordOf(a),bo=ordOf(b);
+  const av=ao<1e15?ao:nextOrder(a.parentId||''),bv=bo<1e15?bo:av+1;
+  try{await db.collection('folders').doc(a.id).update({...a,order:bv});await db.collection('folders').doc(b.id).update({...b,order:av})}
+  catch(e){$('err').textContent='순서 변경 실패: '+(e.code||e.message)}
+}
 $('addF').onclick=()=>{$('newf').classList.toggle('on');$('fname').focus()};
 async function mk(){const name=$('fname').value.trim();if(!name||!db)return;
-  try{const id=uid();await db.collection('folders').doc(id).set({name,parentId:cur,createdAt:Date.now()});$('fname').value='';$('newf').classList.remove('on');open.add(cur)}
+  try{const id=uid();await db.collection('folders').doc(id).set({name,parentId:cur,order:nextOrder(cur),createdAt:Date.now()});$('fname').value='';$('newf').classList.remove('on');open.add(cur)}
   catch(e){$('err').textContent='폴더 만들기 실패: '+(e.code||e.message)}}
 $('mkF').onclick=mk;$('fname').onkeydown=e=>{if(e.key==='Enter')mk()};
 
@@ -321,8 +341,8 @@ $('bGo').onclick=async()=>{
   if(!names.length&&!bFiles.length){$('bErr').textContent='이름이나 사진을 넣어주세요.';return}
   const b=$('bGo');b.disabled=true;let n=0;const total=names.length+bFiles.length;
   try{
-    for(const name of names){await db.collection('folders').doc(uid()).set({name,parentId:cur,createdAt:Date.now()});$('bErr').textContent=(++n)+'/'+total+' 만드는 중…'}
-    if(bFiles.length&&assets)for(const f of bFiles){const r=await assets.upload(f);await db.collection('folders').doc(uid()).set({name:f.name.replace(/\.[^.]+$/,'')||'새 폴더',icon:r.id,parentId:cur,createdAt:Date.now()});$('bErr').textContent=(++n)+'/'+total+' 만드는 중…'}
+    for(const name of names){await db.collection('folders').doc(uid()).set({name,parentId:cur,order:nextOrder(cur),createdAt:Date.now()});$('bErr').textContent=(++n)+'/'+total+' 만드는 중…'}
+    if(bFiles.length&&assets)for(const f of bFiles){const r=await assets.upload(f);await db.collection('folders').doc(uid()).set({name:f.name.replace(/\.[^.]+$/,'')||'새 폴더',icon:r.id,parentId:cur,order:nextOrder(cur),createdAt:Date.now()});$('bErr').textContent=(++n)+'/'+total+' 만드는 중…'}
     open.add(cur);$('bulkM').classList.remove('on');
   }catch(e){$('bErr').textContent='실패: '+(e.code||e.message)}
   b.disabled=false;
@@ -449,7 +469,7 @@ $('rsGo').onclick=async()=>{
     const r=await assets.upload(new Blob([await ent.async('arraybuffer')],{type}));return r.id};
   for(const f of nf){
     try{const icon=await upl(f.icon),bg=await upl(f.bg);
-      await db.collection('folders').doc(f.id).set({name:String(f.name||'이름없음'),parentId:f.parentId||'',icon,bg,bgDim:f.bgDim==null?60:+f.bgDim,color:f.color||'',createdAt:f.createdAt||Date.now()})}catch(x){fail++}
+      await db.collection('folders').doc(f.id).set({name:String(f.name||'이름없음'),parentId:f.parentId||'',icon,bg,bgDim:f.bgDim==null?60:+f.bgDim,color:f.color||'',order:typeof f.order==='number'?f.order:nextOrder(f.parentId||''),createdAt:f.createdAt||Date.now()})}catch(x){fail++}
     st((++n)+' / '+total+' 복원 중…')}
   for(const p of np){
     try{const images=[],videos=[];
