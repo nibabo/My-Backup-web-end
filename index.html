@@ -64,6 +64,18 @@ textarea.t{border:0;padding:0;min-height:70px;resize:vertical;font-size:16px}
 .body{white-space:pre-wrap;word-break:break-word;margin:6px 0}
 .imgs{display:grid;gap:6px;grid-template-columns:1fr 1fr;margin-top:8px}.imgs.one{grid-template-columns:1fr}
 .vid{width:100%;max-height:440px;border-radius:12px;background:#000;margin-top:8px}
+.imgs img,.vid{cursor:zoom-in}
+#lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:80;display:none;flex-direction:column;touch-action:none}
+#lb.on{display:flex}
+#lb .bar{display:flex;align-items:center;gap:8px;padding:calc(10px + env(safe-area-inset-top,0px)) 12px 10px;color:#fff}
+#lb .bar button{background:rgba(255,255,255,.15);color:#fff;padding:6px 12px}
+#lb .cnt{color:rgba(255,255,255,.7);font-size:13px}
+#lb .stage{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+#lb .stage img,#lb .stage video{max-width:100%;max-height:100%;transform-origin:center center;touch-action:none;user-select:none}
+#lb .nav{position:absolute;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.4);color:#fff;width:40px;height:40px;border-radius:50%;font-size:18px}
+#lb .nav.l{left:8px}#lb .nav.r{right:8px}
+#lb .dl{position:fixed;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center}
+#lb .dl a{background:var(--accent);color:#fff;padding:10px 22px;border-radius:999px;font-weight:700;text-decoration:none}
 .thumbs video{width:68px;height:68px;object-fit:cover;border-radius:10px}
 .imgs img{width:100%;max-height:440px;object-fit:cover;border-radius:12px;background:var(--card)}
 .del{color:var(--sub);font-weight:400;font-size:13px;padding:2px 8px}.del.confirm{color:var(--danger);font-weight:700}
@@ -176,6 +188,11 @@ button:active,label.btn:active{transform:scale(.96)}
   <div class="meta" id="bkSt" style="min-height:20px;word-break:break-all"></div>
   <div class="row"><button class="primary" id="rsGo" style="display:none">복원 시작</button><span class="sp"></span><button class="ghost" id="bkClose">닫기</button></div>
 </div></div>
+
+<div id="lb"><div class="bar"><button id="lbX">닫기</button><span class="cnt" id="lbCnt"></span></div>
+  <div class="stage" id="lbStage"><button class="nav l" id="lbP">‹</button><button class="nav r" id="lbN">›</button></div>
+  <div class="dl"><a id="lbDl" download>⬇︎ 저장</a></div>
+</div>
 
 <div class="modal" id="cutM"><div class="box" style="max-width:560px">
   <h2>배경 지우기</h2>
@@ -303,8 +320,8 @@ function renderMain(){
     };
     r.append(el('span','meta',fmt(p.createdAt)),d);e.appendChild(r);
     if(p.text)e.appendChild(el('div','body',p.text));
-    if(p.images&&p.images.length){const g=el('div','imgs'+(p.images.length===1?' one':''));p.images.forEach(id=>{const i=document.createElement('img');i.loading='lazy';i.src=url(id);g.appendChild(i)});e.appendChild(g)}
-    (p.videos||[]).forEach(id=>{const v=document.createElement('video');v.className='vid';v.controls=true;v.playsInline=true;v.preload='metadata';v.src=url(id);e.appendChild(v)});
+    if(p.images&&p.images.length){const g=el('div','imgs'+(p.images.length===1?' one':''));const media=[...p.images.map(id=>({type:'image',id})),...(p.videos||[]).map(id=>({type:'video',id}))];p.images.forEach((id,ix)=>{const i=document.createElement('img');i.loading='lazy';i.src=url(id);i.onclick=()=>openLb(media,ix);g.appendChild(i)});e.appendChild(g)}
+    {const media=[...p.images.map(id=>({type:'image',id})),...(p.videos||[]).map(id=>({type:'video',id}))];(p.videos||[]).forEach((id,ix)=>{const v=document.createElement('video');v.className='vid';v.controls=true;v.playsInline=true;v.preload='metadata';v.src=url(id);v.addEventListener('click',ev=>{if(!v.paused)return;ev.preventDefault();openLb(media,(p.images||[]).length+ix)});e.appendChild(v)});}
     list.appendChild(e);
   });
 }
@@ -480,6 +497,48 @@ $('rsGo').onclick=async()=>{
   st('복원이 끝났어요.'+(fail?' ('+fail+'개는 실패했어요)':''));
   busy=false;setBusy(false);
 };
+
+// lightbox
+let lbItems=[],lbIx=0,lbScale=1,lbX=0,lbY=0,lbPinch=null;
+const lbEl=()=>$('lbStage').querySelector('img,video');
+function lbShow(){
+  const st=$('lbStage');[...st.querySelectorAll('img,video')].forEach(n=>n.remove());
+  const m=lbItems[lbIx];
+  const el2=document.createElement(m.type==='video'?'video':'img');
+  el2.src=url(m.id);if(m.type==='video'){el2.controls=true;el2.playsInline=true}
+  st.insertBefore(el2,st.firstChild);
+  lbScale=1;lbX=0;lbY=0;lbApply();
+  $('lbCnt').textContent=(lbIx+1)+' / '+lbItems.length;
+  $('lbP').style.visibility=lbIx>0?'visible':'hidden';
+  $('lbN').style.visibility=lbIx<lbItems.length-1?'visible':'hidden';
+  const a=$('lbDl');a.href=url(m.id);a.download=(m.type==='video'?'영상':'사진')+'_'+(lbIx+1);
+}
+function lbApply(){const n=lbEl();if(n)n.style.transform='translate('+lbX+'px,'+lbY+'px) scale('+lbScale+')'}
+function openLb(items,ix){lbItems=items;lbIx=ix;$('lb').classList.add('on');lbShow()}
+$('lbX').onclick=()=>{$('lb').classList.remove('on');const n=lbEl();if(n&&n.tagName==='VIDEO')n.pause()};
+$('lbP').onclick=()=>{if(lbIx>0){lbIx--;lbShow()}};
+$('lbN').onclick=()=>{if(lbIx<lbItems.length-1){lbIx++;lbShow()}};
+$('lbStage').addEventListener('dblclick',()=>{lbScale=lbScale>1?1:2.5;lbX=0;lbY=0;lbApply()});
+let lastTap=0,drag=null,swipeX0=0;
+$('lbStage').addEventListener('touchstart',e=>{
+  if(e.touches.length===2){lbPinch={d:dist(e.touches),s:lbScale};drag=null}
+  else if(e.touches.length===1){
+    const t=Date.now();if(t-lastTap<300){lbScale=lbScale>1?1:2.5;lbX=0;lbY=0;lbApply()}lastTap=t;
+    drag={x:e.touches[0].clientX,y:e.touches[0].clientY,ox:lbX,oy:lbY};swipeX0=e.touches[0].clientX;
+  }
+},{passive:true});
+function dist(t){const a=t[0],b=t[1];return Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)}
+$('lbStage').addEventListener('touchmove',e=>{
+  if(e.touches.length===2&&lbPinch){lbScale=Math.max(1,Math.min(5,lbPinch.s*dist(e.touches)/lbPinch.d));lbApply()}
+  else if(e.touches.length===1&&drag){
+    if(lbScale>1){lbX=drag.ox+(e.touches[0].clientX-drag.x);lbY=drag.oy+(e.touches[0].clientY-drag.y);lbApply()}
+  }
+},{passive:true});
+$('lbStage').addEventListener('touchend',e=>{
+  if(lbScale<=1&&drag){const dx=(e.changedTouches[0]?e.changedTouches[0].clientX:swipeX0)-swipeX0;
+    if(dx>60&&lbIx>0){lbIx--;lbShow()}else if(dx<-60&&lbIx<lbItems.length-1){lbIx++;lbShow()}}
+  drag=null;lbPinch=null;
+});
 
 // background remover
 let cut=null;const cvs=$('cvs'),cctx=cvs.getContext('2d',{willReadFrequently:true});
